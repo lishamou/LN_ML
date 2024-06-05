@@ -1,0 +1,184 @@
+# 1.Elastic Net Model Training Function
+elasticNetTrain <- function(dataSet, labelSet, operationMode, targetVar, alphaValue){
+  crossValidation <- cv.glmnet(x = dataSet,
+                               y = labelSet[[targetVar]],
+                               family = "binomial", alpha = alphaValue, nfolds = 10)
+  modelFit <- glmnet(x = dataSet,
+                     y = labelSet[[targetVar]],
+                     family = "binomial", alpha = alphaValue, lambda = crossValidation$lambda.min)
+  modelFit$selectedFeatures <- colnames(dataSet)
+  if (operationMode == "Model") {
+    return(modelFit)
+  }
+  if (operationMode == "Variable") {
+    return(extractFeatures(modelFit))
+  }
+}
+
+# 2.Lasso Regression Function
+lassoRegression <- function(dataSet, labelSet, operationMode, targetVar){
+  return(elasticNetTrain(dataSet, labelSet, operationMode, targetVar, alpha = 1))
+}
+
+# 3.Ridge Regression Function
+ridgeRegression <- function(dataSet, labelSet, operationMode, targetVar){
+  return(elasticNetTrain(dataSet, labelSet, operationMode, targetVar, alpha = 0))
+}
+
+# 4.Stepwise Generalized Linear Model Function
+stepwiseGLM <- function(dataSet, labelSet, operationMode, targetVar, directionOption){
+  stepModel <- step(glm(formula = labelSet[[targetVar]] ~ .,
+                        family = "binomial", 
+                        data = as.data.frame(dataSet)),
+                    direction = directionOption, trace = 0)
+  stepModel$selectedFeatures <- colnames(dataSet)
+  if (operationMode == "Model") {
+    return(stepModel)
+  }
+  if (operationMode == "Variable") {
+    return(extractFeatures(stepModel))
+  }
+}
+
+# 5.Support Vector Machine Function
+supportVectorMachine <- function(dataSet, labelSet, operationMode, targetVar){
+  dataFrame <- as.data.frame(dataSet)
+  dataFrame[[targetVar]] <- as.factor(labelSet[[targetVar]])
+  svmModel <- svm(formula = eval(parse(text = paste(targetVar, "~."))),
+                  data = dataFrame, probability = TRUE)
+  svmModel$selectedFeatures <- colnames(dataSet)
+  if (operationMode == "Model") {
+    return(svmModel)
+  }
+  if (operationMode == "Variable") {
+    return(extractFeatures(svmModel))
+  }
+}
+
+# 6.Linear Discriminant Analysis Function
+linearDiscriminantAnalysis <- function(dataSet, labelSet, operationMode, targetVar){
+  dataFrame <- as.data.frame(dataSet)
+  dataFrame[[targetVar]] <- as.factor(labelSet[[targetVar]])
+  ldaModel <- train(eval(parse(text = paste(targetVar, "~."))), 
+                    data = dataFrame, 
+                    method = "lda",
+                    trControl = trainControl(method = "cv"))
+  ldaModel$selectedFeatures <- colnames(dataSet)
+  if (operationMode == "Model") {
+    return(ldaModel)
+  }
+  if (operationMode == "Variable") {
+    return(extractFeatures(ldaModel))
+  }
+}
+
+# 7.Training Function for GLM Boost Model
+trainGLMBoost <- function(trainingData, trainingLabels, operationMode, targetVar){
+  mergedData <- cbind(trainingData, trainingLabels[targetVar])
+  mergedData[[targetVar]] <- as.factor(mergedData[[targetVar]])
+  glmBoostModel <- glmboost(eval(parse(text = paste(targetVar, "~."))),
+                            data = mergedData,
+                            family = Binomial())
+  
+  crossValidation <- cvrisk(glmBoostModel, papply = lapply,
+                            folds = cv(model.weights(glmBoostModel), type = "kfold"))
+  glmBoostModel <- glmboost(eval(parse(text = paste(targetVar, "~."))),
+                            data = mergedData,
+                            family = Binomial(), 
+                            control = boost_control(mstop = max(mstop(crossValidation), 40)))
+  
+  glmBoostModel$featuresSelected <- colnames(trainingData)
+  if (operationMode == "Model") return(glmBoostModel)
+  if (operationMode == "Variable") return(extractFeatures(glmBoostModel))
+}
+
+# 8.Training Function for Partial Least Squares Regression GLM Model
+trainPLSRglm <- function(trainingData, trainingLabels, operationMode, targetVar){
+  cvResult <- cv.plsRglm(formula = trainingLabels[[targetVar]] ~ ., 
+                         data = as.data.frame(trainingData),
+                         nt=10, verbose = FALSE)
+  plsRglmModel <- plsRglm(trainingLabels[[targetVar]], 
+                          as.data.frame(trainingData), 
+                          modele = "pls-glm-logistic",
+                          verbose = FALSE, sparse = TRUE)
+  plsRglmModel$featuresSelected <- colnames(trainingData)
+  if (operationMode == "Model") return(plsRglmModel)
+  if (operationMode == "Variable") return(extractFeatures(plsRglmModel))
+}
+
+# 9.Training Function for Random Forest Model
+trainRandomForest <- function(trainingData, trainingLabels, operationMode, targetVar){
+  nodeSizeRF <- 5  # Node size parameter, adjustable
+  trainingLabels[[targetVar]] <- as.factor(trainingLabels[[targetVar]])
+  rfModel <- rfsrc(formula = formula(paste0(targetVar, "~.")),
+                   data = cbind(trainingData, trainingLabels[targetVar]),
+                   ntree = 1000, nodesize = nodeSizeRF,
+                   importance = TRUE,
+                   proximity = TRUE,
+                   forest = TRUE)
+  rfModel$featuresSelected <- colnames(trainingData)
+  if (operationMode == "Model") return(rfModel)
+  if (operationMode == "Variable") return(extractFeatures(rfModel))
+}
+
+# 10.Training Function for Gradient Boosting Machine Model
+trainGBM <- function(trainingData, trainingLabels, operationMode, targetVar){
+  gbmModel <- gbm(formula = trainingLabels[[targetVar]] ~ .,
+                  data = as.data.frame(trainingData),
+                  distribution = 'bernoulli',
+                  n.trees = 10000,
+                  interaction.depth = 3,
+                  n.minobsinnode = 10,
+                  shrinkage = 0.001,
+                  cv.folds = 10, n.cores = 6)
+  bestIteration <- which.min(gbmModel$cv.error)
+  gbmModel <- gbm(formula = trainingLabels[[targetVar]] ~ .,
+                  data = as.data.frame(trainingData),
+                  distribution = 'bernoulli',
+                  n.trees = bestIteration,
+                  interaction.depth = 3,
+                  n.minobsinnode = 10,
+                  shrinkage = 0.001, n.cores = 8)
+  gbmModel$featuresSelected <- colnames(trainingData)
+  if (operationMode == "Model") return(gbmModel)
+  if (operationMode == "Variable") return(extractFeatures(gbmModel))
+}
+
+# 11.Training Function for XGBoost Model
+trainXGBoost <- function(trainingData, trainingLabels, operationMode, targetVar){
+  foldIndexes <- createFolds(trainingLabels[[targetVar]], k = 5, list = TRUE)
+  crossValidationResults <- unlist(lapply(foldIndexes, function(pts){
+    dtrain <- xgb.DMatrix(data = trainingData[-pts, ], 
+                          label = trainingLabels[-pts, ])
+    dtest <- xgb.DMatrix(data = trainingData[pts, ], 
+                         label = trainingLabels[pts, ])
+    watchlist <- list(train = dtrain, test = dtest)
+    
+    xgbModel <- xgb.train(data = dtrain, 
+                          max.depth = 2, eta = 1, nthread = 2, nrounds = 10, 
+                          watchlist = watchlist, 
+                          objective = "binary:logistic", verbose = FALSE)
+    which.min(xgbModel$evaluation_log$test_logloss)
+  }))
+  
+  bestRound <- as.numeric(names(which.max(table(crossValidationResults))))
+  xgbModel <- xgboost(data = trainingData, 
+                      label = trainingLabels[[targetVar]], 
+                      max.depth = 2, eta = 1, nthread = 2, nrounds = bestRound, 
+                      objective = "binary:logistic", verbose = FALSE)
+  xgbModel$featuresSelected <- colnames(trainingData)
+  
+  if (operationMode == "Model") return(xgbModel)
+  if (operationMode == "Variable") return(extractFeatures(xgbModel))
+}
+
+# 12.Training Function for Naive Bayes Model
+trainNaiveBayes <- function(trainingData, trainingLabels, operationMode, targetVar){
+  mergedData <- cbind(trainingData, trainingLabels[targetVar])
+  mergedData[[targetVar]] <- as.factor(mergedData[[targetVar]])
+  nbModel <- naiveBayes(eval(parse(text = paste(targetVar, "~."))), 
+                        data = mergedData)
+  nbModel$featuresSelected <- colnames(trainingData)
+  if (operationMode == "Model") return(nbModel)
+  if (operationMode == "Variable") return(extractFeatures(nbModel))
+}
